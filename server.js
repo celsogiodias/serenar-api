@@ -3,7 +3,18 @@ const admin = require('firebase-admin');
 const axios = require('axios');
 const cors = require('cors');
 
-const serviceAccount = require('./serviceAccountKey.json');
+let serviceAccount;
+if (process.env.SERVICE_ACCOUNT_JSON) {
+  try {
+    serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+  } catch (e) {
+    console.error('Erro ao fazer parse do SERVICE_ACCOUNT_JSON');
+    process.exit(1);
+  }
+} else {
+  serviceAccount = require('./serviceAccountKey.json');
+}
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
