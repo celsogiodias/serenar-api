@@ -1,5 +1,6 @@
 const express = require('express');
-const admin = require('firebase-admin');
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
 const axios = require('axios');
 const cors = require('cors');
 
@@ -15,8 +16,8 @@ if (process.env.SERVICE_ACCOUNT_JSON) {
   serviceAccount = require('./serviceAccountKey.json');
 }
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+initializeApp({
+  credential: cert(serviceAccount)
 });
 
 const app = express();
@@ -32,7 +33,7 @@ app.post('/criarPagamento', async (req, res) => {
       return res.status(401).json({ error: 'Usuário não autenticado.' });
     }
     const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const decodedToken = await getAuth().verifyIdToken(idToken);
     const uid = decodedToken.uid;
     const email = decodedToken.email;
     const { plano } = req.body;
