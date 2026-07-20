@@ -1,82 +1,56 @@
-const express = require('express');
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getAuth } = require('firebase-admin/auth');
-const axios = require('axios');
-const cors = require('cors');
+import { createContext, useContext, useEffect, useState } from 'react';
+import { auth } from '../services/firebase';
 
-let serviceAccount;
-if (process.env.SERVICE_ACCOUNT_JSON) {
-  try {
-    serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
-  } catch (e) {
-    console.error('Erro ao fazer parse do SERVICE_ACCOUNT_JSON');
-    process.exit(1);
-  }
-} else {
-  serviceAccount = require('./serviceAccountKey.json');
+const ADMIN_EMAIL = 'celsogiodias@gmail.com';
+
+const AuthContext = createContext({});
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((firebaseUser) => {
+      if (firebaseUser) {
+        setUser({ ...firebaseUser, isAdmin: firebaseUser.email === ADMIN_EMAIL });
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    // Renovação forçada do token a cada 30 min
+    const intervalo = setInterval(async () => {
+      try {
+        if (auth.currentUser) {
+          await auth.currentUser.getIdToken(true);
+        }
+      } catch (e) {
+        // ignora falha na renovação
+      }
+    }, 30 * 60 * 1000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(intervalo);
+    };
+  }, []);
+
+  const logout = async () => {
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, loading, logout, auth }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
-initializeApp({
-  credential: cert(serviceAccount)
-});
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const MERCADO_PAGO_TOKEN = process.env.MERCADO_PAGO_TOKEN;
-
-app.post('/criarPagamento', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Usuário não autenticado.' });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await getAuth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-    const email = decodedToken.email;
-    const { plano } = req.body;
-    const precos = {
-      mensal: { valor: 9.90, descricao: 'Serenar - Plano Mensal' },
-      anual: { valor: 89.90, descricao: 'Serenar - Plano Anual' },
-    };
-    if (!precos[plano]) {
-      return res.status(400).json({ error: 'Plano inválido.' });
-    }
-    const response = await axios.post(
-      'https://api.mercadopago.com/checkout/preferences',
-      {
-        items: [{
-          title: precos[plano].descricao,
-          quantity: 1,
-          currency_id: 'BRL',
-          unit_price: precos[plano].valor,
-        }],
-        payer: { email: email },
-        back_urls: {
-          success: 'serenarapp://pagamento/sucesso',
-          failure: 'serenarapp://pagamento/erro',
-          pending: 'serenarapp://pagamento/pendente',
-        },
-        auto_return: 'approved',
-        external_reference: `${uid}_${plano}`,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${MERCADO_PAGO_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    return res.json({ url: response.data.init_point, preferenceId: response.data.id });
-  } catch (error) {
-    console.error('Erro:', error.response?.data || error.message);
-    return res.status(500).json({ error: 'Erro ao gerar link de pagamento.' });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+export function useAuth() {
+  return useContext(AuthContext);
+}
