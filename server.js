@@ -179,6 +179,31 @@ app.post('/criarPagamento', async (req, res) => {
   }
 });
 
+// ─── Admin: listar assinantes ───
+app.get('/listarAssinantes', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autenticado.' });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+
+    if (!ADMIN_EMAILS.includes(decodedToken.email)) {
+      return res.status(403).json({ error: 'Apenas o administrador.' });
+    }
+
+    const snapshot = await db.collection('subscriptions').get();
+    const assinantes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    return res.json({ assinantes });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao listar assinantes.' });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
