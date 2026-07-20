@@ -28,7 +28,94 @@ app.use(cors());
 app.use(express.json());
 
 const MERCADO_PAGO_TOKEN = process.env.MERCADO_PAGO_TOKEN;
+const ADMIN_EMAILS = ['celsogiodias@gmail.com'];
 
+// ─── Verificar se usuário tem early access ───
+app.post('/verificarAcesso', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Usuário não autenticado.' });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const email = decodedToken.email;
+
+    // Verifica se o email está na lista de early access
+    const doc = await db.collection('earlyAccess').doc(email).get();
+
+    if (doc.exists && doc.data().status === 'convidado') {
+      return res.json({ acesso: 'gratuito', mensagem: 'Acesso liberado via early access.' });
+    }
+
+    return res.json({ acesso: 'pago', mensagem: 'Usuário não está na lista de early access.' });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao verificar acesso.' });
+  }
+});
+
+// ─── Admin: adicionar email na lista de early access ───
+app.post('/adicionarEarlyAccess', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autenticado.' });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+
+    if (!ADMIN_EMAILS.includes(decodedToken.email)) {
+      return res.status(403).json({ error: 'Apenas o administrador pode adicionar emails.' });
+    }
+
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email é obrigatório.' });
+    }
+
+    await db.collection('earlyAccess').doc(email).set({
+      email,
+      status: 'convidado',
+      criadoEm: new Date().toISOString(),
+      adicionadoPor: decodedToken.email,
+    });
+
+    return res.json({ sucesso: true, mensagem: `${email} adicionado ao early access.` });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao adicionar email.' });
+  }
+});
+
+// ─── Admin: listar early access ───
+app.get('/listarEarlyAccess', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autenticado.' });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+
+    if (!ADMIN_EMAILS.includes(decodedToken.email)) {
+      return res.status(403).json({ error: 'Apenas o administrador.' });
+    }
+
+    const snapshot = await db.collection('earlyAccess').get();
+    const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    return res.json({ emails: lista });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao listar.' });
+  }
+});
+
+// ─── Criar pagamento (já existente) ───
 app.post('/criarPagamento', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -77,7 +164,6 @@ app.post('/criarPagamento', async (req, res) => {
       }
     );
 
-    // Salvar subscription no Firestore
     await db.collection('subscriptions').doc(uid).set({
       uid,
       email,
