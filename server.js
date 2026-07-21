@@ -26,8 +26,7 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 // 🔐 Mercado Pago
 const mercadopago = new MercadoPagoConfig({
-  accessToken: 'APP_USR-1166110188068407-071119-43e46b5d8f9750aa4c0094caff0fedc5-3536048382',
-});
+accessToken: 'APP_USR-3694127440199156-072101-c9a81e6d399b6e4de79b5cf5abf1003e-3537313316',});
 
 // 🔐 Middleware de autenticação Firebase
 async function authMiddleware(req, res, next) {
