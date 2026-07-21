@@ -23,10 +23,8 @@ const serviceAccount = {
 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// Mercado Pago
-const mercadopago = new MercadoPago(process.env.MP_ACCESS_TOKEN, {
-  sandbox: true
-});
+// Mercado Pago — CORRIGIDO
+const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
 async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
@@ -49,12 +47,15 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
 
     const precos = { mensal: 9.90, lancamento: 89.90 };
     const titulos = { mensal: 'Serenar - Plano Mensal', lancamento: 'Serenar - Plano Lançamento' };
+
     const preco = precos[plano];
     const titulo = titulos[plano];
 
     if (!preco) return res.status(400).json({ error: 'Plano inválido' });
 
-    const preference = new Preference(mercadopago);
+    // CORRIGIDO: usa o client, não o mercadopago
+    const preference = new Preference(client);
+
     const result = await preference.create({
       body: {
         items: [{
