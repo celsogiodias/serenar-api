@@ -24,8 +24,8 @@ const serviceAccount = {
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 // Mercado Pago
-const mercadopago = new MercadoPagoConfig({
-  accessToken: 'APP_USR-3694127440199156-072101-c9a81e6d399b6e4de79b5cf5abf1003e-3537313316',
+const mercadopago = new MercadoPago(process.env.MP_ACCESS_TOKEN, {
+  sandbox: true
 });
 
 async function authMiddleware(req, res, next) {
