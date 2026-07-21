@@ -316,6 +316,39 @@ app.get('/listarAssinantes', async (req, res) => {
   }
 });
 
+// ─── Teste: enviar email manual ───
+app.post('/api/testarEmail', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autenticado.' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const email = decodedToken.email;
+
+    const { tipo } = req.body; // 'boasvindas', 'cancelamento' ou 'renovacao'
+
+    const userDoc = await db.collection('usuarios').doc(decodedToken.uid).get();
+    const nome = userDoc.exists ? userDoc.data().nome : '';
+
+    if (tipo === 'boasvindas') {
+      await enviarEmailBoasVindas(email, nome);
+    } else if (tipo === 'cancelamento') {
+      await enviarEmailCancelamento(email, nome);
+    } else if (tipo === 'renovacao') {
+      await enviarEmailRenovacao(email, nome);
+    } else {
+      return res.status(400).json({ error: 'Tipo inválido. Use: boasvindas, cancelamento ou renovacao' });
+    }
+
+    return res.json({ sucesso: true, mensagem: `Email de ${tipo} enviado para ${email}` });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao enviar email.' });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
