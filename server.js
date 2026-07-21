@@ -349,6 +349,25 @@ app.post('/api/testarEmail', async (req, res) => {
   }
 });
 
+app.post('/api/testarEmail', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autenticado.' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const email = decodedToken.email;
+    const userDoc = await db.collection('usuarios').doc(decodedToken.uid).get();
+    const nome = userDoc.exists ? userDoc.data().nome : '';
+    await enviarEmailBoasVindas(email, nome);
+    return res.json({ sucesso: true, mensagem: `Email enviado para ${email}` });
+  } catch (error) {
+    console.error('Erro:', error.message);
+    return res.status(500).json({ error: 'Erro ao enviar email.' });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
