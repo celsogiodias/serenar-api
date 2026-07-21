@@ -23,7 +23,6 @@ initializeApp({
 
 const db = getFirestore();
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
@@ -37,14 +36,11 @@ app.post('/verificarAcesso', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Usuário não autenticado.' });
     }
-
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
     const email = decodedToken.email;
 
-    // Verifica se o email está na lista de early access
     const doc = await db.collection('earlyAccess').doc(email).get();
-
     if (doc.exists && doc.data().status === 'convidado') {
       return res.json({ acesso: 'gratuito', mensagem: 'Acesso liberado via early access.' });
     }
@@ -63,7 +59,6 @@ app.post('/adicionarEarlyAccess', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Não autenticado.' });
     }
-
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
 
@@ -97,7 +92,6 @@ app.get('/listarEarlyAccess', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Não autenticado.' });
     }
-
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
 
@@ -107,7 +101,6 @@ app.get('/listarEarlyAccess', async (req, res) => {
 
     const snapshot = await db.collection('earlyAccess').get();
     const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
     return res.json({ emails: lista });
   } catch (error) {
     console.error('Erro:', error.message);
@@ -115,20 +108,19 @@ app.get('/listarEarlyAccess', async (req, res) => {
   }
 });
 
-// ─── Criar pagamento (já existente) ───
+// ─── Criar pagamento ───
 app.post('/criarPagamento', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Usuário não autenticado.' });
     }
-
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
     const uid = decodedToken.uid;
     const email = decodedToken.email;
-    const { plano } = req.body;
 
+    const { plano } = req.body;
     const precos = {
       mensal: { valor: 9.90, descricao: 'Serenar - Plano Mensal' },
       anual: { valor: 89.90, descricao: 'Serenar - Plano Anual' },
@@ -179,14 +171,13 @@ app.post('/criarPagamento', async (req, res) => {
   }
 });
 
-// ─── Admin: listar assinantes ───
+// ─── Admin: listar assinantes (FILTRADO) ───
 app.get('/listarAssinantes', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Não autenticado.' });
     }
-
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
 
@@ -195,7 +186,9 @@ app.get('/listarAssinantes', async (req, res) => {
     }
 
     const snapshot = await db.collection('subscriptions').get();
-    const assinantes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const assinantes = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(a => !ADMIN_EMAILS.includes(a.email)); // ← FILTRA ADMIN
 
     return res.json({ assinantes });
   } catch (error) {
