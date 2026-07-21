@@ -2,13 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { MercadoPagoConfig, Preference } = require('mercadopago');
-const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Firebase Admin
+// Firebase Admin
 const serviceAccount = {
   type: 'service_account',
   project_id: 'serenar-app',
@@ -24,11 +23,11 @@ const serviceAccount = {
 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// 🔐 Mercado Pago
+// Mercado Pago
 const mercadopago = new MercadoPagoConfig({
-accessToken: 'APP_USR-3694127440199156-072101-c9a81e6d399b6e4de79b5cf5abf1003e-3537313316',});
+  accessToken: 'APP_USR-3694127440199156-072101-c9a81e6d399b6e4de79b5cf5abf1003e-3537313316',
+});
 
-// 🔐 Middleware de autenticação Firebase
 async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -43,36 +42,28 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-// 🚀 Rota: Criar pagamento
 app.post('/criarPagamento', authMiddleware, async (req, res) => {
   try {
-    const { plano } = req.body; // 'mensal' ou 'vitalicio'
+    const { plano } = req.body;
     const userId = req.user.uid;
 
-    const precos = { mensal: 9.90, vitalicio: 99.90 };
-    const titulos = { mensal: 'Serenar - Plano Mensal', vitalicio: 'Serenar - Plano Vitalício' };
+    const precos = { mensal: 9.90, lancamento: 89.90 };
+    const titulos = { mensal: 'Serenar - Plano Mensal', lancamento: 'Serenar - Plano Lançamento' };
     const preco = precos[plano];
     const titulo = titulos[plano];
 
-    if (!preco) {
-      return res.status(400).json({ error: 'Plano inválido' });
-    }
-
-    const idempotencyKey = crypto.randomUUID();
+    if (!preco) return res.status(400).json({ error: 'Plano inválido' });
 
     const preference = new Preference(mercadopago);
-
     const result = await preference.create({
       body: {
-        items: [
-          {
-            id: `plano_${plano}_${userId}`,
-            title: titulo,
-            quantity: 1,
-            currency_id: 'BRL',
-            unit_price: preco,
-          },
-        ],
+        items: [{
+          id: `plano_${plano}_${userId}`,
+          title: titulo,
+          quantity: 1,
+          currency_id: 'BRL',
+          unit_price: preco,
+        }],
         payer: { email: req.user.email },
         back_urls: {
           success: 'https://serenar-app.web.app/pagamento/sucesso',
@@ -83,21 +74,18 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
         notification_url: 'https://serenar-api.onrender.com/webhook',
         metadata: { userId, plano },
       },
-      requestOptions: { idempotencyKey },
     });
 
-    res.json({ url: result.sandbox_init_point || result.init_point });
+    res.json({ url: result.init_point });
   } catch (error) {
     console.error('Erro ao criar pagamento:', error);
     res.status(500).json({ error: 'Erro ao gerar pagamento' });
   }
 });
 
-// 🚀 Rota: Webhook (notificações do Mercado Pago)
 app.post('/webhook', async (req, res) => {
   try {
-    const payment = req.body;
-    console.log('Webhook recebido:', JSON.stringify(payment, null, 2));
+    console.log('Webhook recebido:', JSON.stringify(req.body, null, 2));
     res.sendStatus(200);
   } catch (error) {
     console.error('Erro no webhook:', error);
@@ -105,7 +93,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ✅ Health check
 app.get('/', (req, res) => res.send('API Serenar rodando!'));
 
 const PORT = process.env.PORT || 3000;
