@@ -37,7 +37,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const enviarEmailBoasVindas = async (email, nome) => {
   try {
     await resend.emails.send({
-      from: 'Serenar <contato@seudominio.com>',
+      from: 'Serenar <onboarding@resend.dev>',
       to: email,
       subject: 'Bem-vindo ao Serenar! 🌙',
       html: `
@@ -60,7 +60,7 @@ const enviarEmailBoasVindas = async (email, nome) => {
 const enviarEmailCancelamento = async (email, nome) => {
   try {
     await resend.emails.send({
-      from: 'Serenar <contato@seudominio.com>',
+      from: 'Serenar <onboarding@resend.dev>',
       to: email,
       subject: 'Assinatura Serenar cancelada',
       html: `
@@ -84,7 +84,7 @@ const enviarEmailCancelamento = async (email, nome) => {
 const enviarEmailRenovacao = async (email, nome) => {
   try {
     await resend.emails.send({
-      from: 'Serenar <contato@seudominio.com>',
+      from: 'Serenar <onboarding@resend.dev>',
       to: email,
       subject: 'Sua assinatura Serenar foi renovada',
       html: `
