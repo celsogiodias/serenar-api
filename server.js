@@ -4,6 +4,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { getFirestore } = require('firebase-admin/firestore');
 const axios = require('axios');
 const cors = require('cors');
+const { Resend } = require('resend');
 
 let serviceAccount;
 if (process.env.SERVICE_ACCOUNT_JSON) {
@@ -17,19 +18,136 @@ if (process.env.SERVICE_ACCOUNT_JSON) {
   serviceAccount = require('./serviceAccountKey.json');
 }
 
-initializeApp({
-  credential: cert(serviceAccount)
-});
+initializeApp({ credential: cert(serviceAccount) });
 
 const db = getFirestore();
 const app = express();
+
+// Webhook precisa de body CRU (raw) para verificar assinatura
+app.use('/api/webhook', express.raw({ type: '*/*' }));
 app.use(cors());
 app.use(express.json());
 
 const MERCADO_PAGO_TOKEN = process.env.MERCADO_PAGO_TOKEN;
 const ADMIN_EMAILS = ['celsogiodias@gmail.com'];
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// ─── Verificar se usuário tem early access ───
+// ─── Funções de Email ───
+
+const enviarEmailBoasVindas = async (email, nome) => {
+  try {
+    await resend.emails.send({
+      from: 'Serenar <contato@seudominio.com>',
+      to: email,
+      subject: 'Bem-vindo ao Serenar! 🌙',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2E86AB;">Bem-vindo ao Serenar, ${nome || 'usuário'}!</h2>
+          <p>Que bom ter você conosco! Sua assinatura foi ativada com sucesso.</p>
+          <p>Você agora tem acesso completo a todas as ferramentas de apoio emocional e regulação.</p>
+          <p>Qualquer dúvida, estamos aqui para ajudar.</p>
+          <br/>
+          <p>Com carinho,<br/>Equipe Serenar</p>
+        </div>
+      `,
+    });
+    console.log(`Email de boas-vindas enviado para ${email}`);
+  } catch (e) {
+    console.error('Erro ao enviar email de boas-vindas:', e.message);
+  }
+};
+
+const enviarEmailCancelamento = async (email, nome) => {
+  try {
+    await resend.emails.send({
+      from: 'Serenar <contato@seudominio.com>',
+      to: email,
+      subject: 'Assinatura Serenar cancelada',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #e74c3c;">Sentiremos sua falta</h2>
+          <p>Olá ${nome || 'usuário'},</p>
+          <p>Sua assinatura do Serenar foi cancelada.</p>
+          <p>Seu acesso continua até o final do período já pago.</p>
+          <p>Se mudar de ideia, você sempre pode reativar sua assinatura pelo app.</p>
+          <br/>
+          <p>Cuide-se,<br/>Equipe Serenar</p>
+        </div>
+      `,
+    });
+    console.log(`Email de cancelamento enviado para ${email}`);
+  } catch (e) {
+    console.error('Erro ao enviar email de cancelamento:', e.message);
+  }
+};
+
+const enviarEmailRenovacao = async (email, nome) => {
+  try {
+    await resend.emails.send({
+      from: 'Serenar <contato@seudominio.com>',
+      to: email,
+      subject: 'Sua assinatura Serenar foi renovada',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2E86AB;">Assinatura renovada! ✅</h2>
+          <p>Olá ${nome || 'usuário'},</p>
+          <p>Sua assinatura do Serenar foi renovada com sucesso.</p>
+          <p>Continue cuidando da sua saúde emocional com a gente.</p>
+          <br/>
+          <p>Com carinho,<br/>Equipe Serenar</p>
+        </div>
+      `,
+    });
+    console.log(`Email de renovação enviado para ${email}`);
+  } catch (e) {
+    console.error('Erro ao enviar email de renovação:', e.message);
+  }
+};
+
+// ─── Webhook Mercado Pago ───
+app.post('/api/webhook/mercadopago', async (req, res) => {
+  try {
+    const event = JSON.parse(req.body);
+
+    // Webhook de pagamento aprovado
+    if (event.type === 'payment') {
+      const paymentId = event.data.id;
+
+      const paymentResponse = await axios.get(
+        `https://api.mercadopago.com/v1/payments/${paymentId}`,
+        { headers: { Authorization: `Bearer ${MERCADO_PAGO_TOKEN}` } }
+      );
+
+      const payment = paymentResponse.data;
+
+      if (payment.status === 'approved') {
+        // external_reference = uid_plano
+        const [uid, plano] = (payment.external_reference || '_').split('_');
+        const email = payment.payer.email;
+
+        // Atualiza subscription no Firestore
+        await db.collection('subscriptions').doc(uid).update({
+          status: 'ativo',
+          paymentId: paymentId,
+          atualizadoEm: new Date().toISOString(),
+        });
+
+        // Busca nome do usuário
+        const userDoc = await db.collection('usuarios').doc(uid).get();
+        const nome = userDoc.exists ? userDoc.data().nome : '';
+
+        await enviarEmailBoasVindas(email, nome);
+      }
+    }
+
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('Erro no webhook:', error.message);
+    res.status(200).send('OK'); // Sempre 200 para MP não reenviar
+  }
+});
+
+// ─── Verificar early access ───
 app.post('/verificarAcesso', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -52,7 +170,7 @@ app.post('/verificarAcesso', async (req, res) => {
   }
 });
 
-// ─── Admin: adicionar email na lista de early access ───
+// ─── Adicionar early access ───
 app.post('/adicionarEarlyAccess', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -85,7 +203,7 @@ app.post('/adicionarEarlyAccess', async (req, res) => {
   }
 });
 
-// ─── Admin: listar early access ───
+// ─── Listar early access ───
 app.get('/listarEarlyAccess', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -147,6 +265,7 @@ app.post('/criarPagamento', async (req, res) => {
         },
         auto_return: 'approved',
         external_reference: `${uid}_${plano}`,
+        notification_url: 'https://serenar-api.onrender.com/api/webhook/mercadopago',
       },
       {
         headers: {
@@ -171,7 +290,7 @@ app.post('/criarPagamento', async (req, res) => {
   }
 });
 
-// ─── Admin: listar assinantes (FILTRADO) ───
+// ─── Listar assinantes ───
 app.get('/listarAssinantes', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -188,7 +307,7 @@ app.get('/listarAssinantes', async (req, res) => {
     const snapshot = await db.collection('subscriptions').get();
     const assinantes = snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter(a => !ADMIN_EMAILS.includes(a.email)); // ← FILTRA ADMIN
+      .filter(a => !ADMIN_EMAILS.includes(a.email));
 
     return res.json({ assinantes });
   } catch (error) {
