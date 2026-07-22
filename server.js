@@ -67,7 +67,7 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
         }],
         payer: { email: req.user.email },
         back_urls: {
-          success: 'https://serenar-app.web.app/pagamento/sucesso',
+          success: 'serenarapp://pagamento/sucesso',
           failure: 'https://serenar-app.web.app/pagamento/erro',
           pending: 'https://serenar-app.web.app/pagamento/pendente',
         },
