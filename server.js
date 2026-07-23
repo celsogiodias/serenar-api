@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { MercadoPagoConfig, Preference } = require('mercadopago');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -20,12 +21,12 @@ const serviceAccount = {
   auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
   client_x509_cert_url: process.env.FIREBASE_CERT_URL,
 };
-
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// Mercado Pago — CORRIGIDO
+// Mercado Pago
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
+// ─── MIDDLEWARE ────────────────────────────────────────
 async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -40,22 +41,65 @@ async function authMiddleware(req, res, next) {
   }
 }
 
+// ─── SESSÃO ÚNICA ─────────────────────────────────────
+app.post('/iniciarSessao', authMiddleware, async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+    const userId = req.user.uid;
+    const sessionToken = crypto.randomUUID();
+    const firestore = admin.firestore();
+
+    await firestore.collection('sessoes').doc(userId).set({
+      sessionToken,
+      deviceId,
+      ultimoLogin: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    res.json({ sessionToken });
+  } catch (error) {
+    console.error('Erro ao iniciar sessão:', error);
+    res.status(500).json({ error: 'Erro ao iniciar sessão' });
+  }
+});
+
+app.post('/validarSessao', authMiddleware, async (req, res) => {
+  try {
+    const { sessionToken } = req.body;
+    const userId = req.user.uid;
+    const firestore = admin.firestore();
+
+    const doc = await firestore.collection('sessoes').doc(userId).get();
+
+    // Primeiro login — sem sessão anterior, permitir
+    if (!doc.exists) {
+      return res.json({ valida: true, motivo: null });
+    }
+
+    const sessao = doc.data();
+    const valida = sessao.sessionToken === sessionToken;
+
+    res.json({
+      valida,
+      motivo: valida ? null : 'Sessão expirada — outro dispositivo fez login',
+    });
+  } catch (error) {
+    console.error('Erro ao validar sessão:', error);
+    res.status(500).json({ error: 'Erro ao validar sessão' });
+  }
+});
+
+// ─── PAGAMENTO ────────────────────────────────────────
 app.post('/criarPagamento', authMiddleware, async (req, res) => {
   try {
     const { plano } = req.body;
     const userId = req.user.uid;
-
     const precos = { mensal: 9.90, lancamento: 89.90 };
     const titulos = { mensal: 'Serenar - Plano Mensal', lancamento: 'Serenar - Plano Lançamento' };
-
     const preco = precos[plano];
     const titulo = titulos[plano];
-
     if (!preco) return res.status(400).json({ error: 'Plano inválido' });
 
-    // CORRIGIDO: usa o client, não o mercadopago
     const preference = new Preference(client);
-
     const result = await preference.create({
       body: {
         items: [{
@@ -76,7 +120,6 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
         metadata: { userId, plano },
       },
     });
-
     res.json({ url: result.init_point });
   } catch (error) {
     console.error('Erro ao criar pagamento:', error);
@@ -84,6 +127,7 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
   }
 });
 
+// ─── WEBHOOK ──────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
   try {
     console.log('Webhook recebido:', JSON.stringify(req.body, null, 2));
@@ -94,7 +138,8 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// ─── HEALTH CHECK ─────────────────────────────────────
 app.get('/', (req, res) => res.send('API Serenar rodando!'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
