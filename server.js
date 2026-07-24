@@ -8,7 +8,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ─── FIREBASE ADMIN ─────────────────────────────────
 const serviceAccount = {
   type: 'service_account',
   project_id: 'serenus-app',
