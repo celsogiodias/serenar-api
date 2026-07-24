@@ -3,11 +3,12 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const { MercadoPagoConfig, Preference } = require('mercadopago');
 const crypto = require('crypto');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Firebase Admin
+// ─── FIREBASE ADMIN ─────────────────────────────────
 const serviceAccount = {
   type: 'service_account',
   project_id: 'serenus-app',
@@ -20,12 +21,14 @@ const serviceAccount = {
   auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
   client_x509_cert_url: process.env.FIREBASE_CERT_URL,
 };
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// Mercado Pago
+admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+const db = admin.firestore();
+
+// ─── MERCADO PAGO ───────────────────────────────────
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-// ─── MIDDLEWARE ────────────────────────────────────────
+// ─── MIDDLEWARE ─────────────────────────────────────
 async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -40,14 +43,16 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-// ─── SESSÃO ÚNICA ─────────────────────────────────────
+// ─── HEALTH CHECK ───────────────────────────────────
+app.get('/', (req, res) => res.send('API Serenar rodando!'));
+
+// ─── SESSÃO ÚNICA ──────────────────────────────────
 app.post('/iniciarSessao', authMiddleware, async (req, res) => {
   try {
     const { deviceId } = req.body;
     const userId = req.user.uid;
     const sessionToken = crypto.randomUUID();
-    const firestore = admin.firestore();
-    await firestore.collection('sessoes').doc(userId).set({
+    await db.collection('sessoes').doc(userId).set({
       sessionToken,
       deviceId,
       ultimoLogin: admin.firestore.FieldValue.serverTimestamp(),
@@ -63,8 +68,7 @@ app.post('/validarSessao', authMiddleware, async (req, res) => {
   try {
     const { sessionToken } = req.body;
     const userId = req.user.uid;
-    const firestore = admin.firestore();
-    const doc = await firestore.collection('sessoes').doc(userId).get();
+    const doc = await db.collection('sessoes').doc(userId).get();
     if (!doc.exists) {
       return res.json({ valida: true, motivo: null });
     }
@@ -80,15 +84,18 @@ app.post('/validarSessao', authMiddleware, async (req, res) => {
   }
 });
 
-// ─── PAGAMENTO ────────────────────────────────────────
+// ─── PAGAMENTO ─────────────────────────────────────
 app.post('/criarPagamento', authMiddleware, async (req, res) => {
   try {
     const { plano } = req.body;
     const userId = req.user.uid;
+
     const precos = { mensal: 9.90, lancamento: 89.90 };
     const titulos = { mensal: 'Serenar - Plano Mensal', lancamento: 'Serenar - Plano Lançamento' };
+
     const preco = precos[plano];
     const titulo = titulos[plano];
+
     if (!preco) return res.status(400).json({ error: 'Plano inválido' });
 
     const preference = new Preference(client);
@@ -103,15 +110,16 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
         }],
         payer: { email: req.user.email },
         back_urls: {
-         success: 'serenarapp://pagamento/sucesso',
-         failure: 'serenarapp://pagamento/erro',
-         pending: 'serenarapp://pagamento/pendente',
-       },
+          success: 'serenarapp://pagamento/sucesso',
+          failure: 'serenarapp://pagamento/erro',
+          pending: 'serenarapp://pagamento/pendente',
+        },
         auto_return: 'approved',
         notification_url: 'https://serenar-api.onrender.com/webhook',
         metadata: { userId, plano },
       },
     });
+
     res.json({ url: result.init_point });
   } catch (error) {
     console.error('Erro ao criar pagamento:', error);
@@ -119,7 +127,7 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
   }
 });
 
-// ─── WEBHOOK ──────────────────────────────────────────
+// ─── WEBHOOK ───────────────────────────────────────
 app.post('/webhook', async (req, res) => {
   try {
     const { type, data } = req.body;
@@ -127,6 +135,7 @@ app.post('/webhook', async (req, res) => {
 
     if (type === 'payment') {
       const paymentId = data.id;
+
       const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
         headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
       });
@@ -134,8 +143,7 @@ app.post('/webhook', async (req, res) => {
 
       if (payment.status === 'approved') {
         const { userId, plano } = payment.metadata;
-        const firestore = admin.firestore();
-        await firestore.collection('usuarios').doc(userId).update({
+        await db.collection('usuarios').doc(userId).update({
           acessoPago: true,
           plano,
           dataAtivacao: admin.firestore.FieldValue.serverTimestamp(),
@@ -144,6 +152,7 @@ app.post('/webhook', async (req, res) => {
         console.log(`Usuário ${userId} ativado (${plano})`);
       }
     }
+
     res.sendStatus(200);
   } catch (error) {
     console.error('Erro no webhook:', error);
@@ -151,7 +160,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ─── ESTORNO ──────────────────────────────────────────
+// ─── ESTORNO ───────────────────────────────────────
 app.post('/estornarPagamento', authMiddleware, async (req, res) => {
   try {
     const { paymentId } = req.body;
@@ -162,16 +171,16 @@ app.post('/estornarPagamento', authMiddleware, async (req, res) => {
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
           'Content-Type': 'application/json',
         },
       }
     );
+
     const data = await response.json();
 
     if (data.status === 'approved' || data.status === 'refunded') {
-      const firestore = admin.firestore();
-      await firestore.collection('usuarios').doc(userId).update({
+      await db.collection('usuarios').doc(userId).update({
         acessoPago: false,
         dataEstorno: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -184,8 +193,125 @@ app.post('/estornarPagamento', authMiddleware, async (req, res) => {
   }
 });
 
-// ─── HEALTH CHECK ─────────────────────────────────────
-app.get('/', (req, res) => res.send('API Serenar rodando!'));
+// ═══════════════════════════════════════════════════════
+// ─── NOVAS ROTAS: EARLY ACCESS E ASSINANTES ───────
+// ═══════════════════════════════════════════════════════
 
+// ─── LISTAR EARLY ACCESS ──────────────────────────
+app.get('/listarEarlyAccess', authMiddleware, async (req, res) => {
+  try {
+    const snapshot = await db.collection('early_access').get();
+    const emails = [];
+
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      emails.push({
+        email: doc.id,
+        status: data.status || 'convidado',
+        criadoEm: data.criadoEm?.toDate()?.toISOString() || null,
+      });
+    });
+
+    res.json({ emails });
+  } catch (error) {
+    console.error('Erro ao listar early access:', error);
+    res.status(500).json({ error: 'Erro ao listar early access' });
+  }
+});
+
+// ─── ADICIONAR EARLY ACCESS ──────────────────────
+app.post('/adicionarEarlyAccess', authMiddleware, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+
+    const emailLimpo = email.trim().toLowerCase();
+
+    // Verifica se já existe
+    const doc = await db.collection('early_access').doc(emailLimpo).get();
+    if (doc.exists) {
+      return res.json({ sucesso: true, mensagem: 'Email já está na lista' });
+    }
+
+    await db.collection('early_access').doc(emailLimpo).set({
+      email: emailLimpo,
+      status: 'convidado',
+      criadoEm: admin.firestore.FieldValue.serverTimestamp(),
+      adicionadoPor: req.user.uid,
+    });
+
+    console.log(`Early access adicionado: ${emailLimpo}`);
+    res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao adicionar early access:', error);
+    res.status(500).json({ error: 'Erro ao adicionar early access' });
+  }
+});
+
+// ─── LISTAR ASSINANTES ───────────────────────────
+app.get('/listarAssinantes', authMiddleware, async (req, res) => {
+  try {
+    const snapshot = await db.collection('usuarios')
+      .where('acessoPago', '==', true)
+      .get();
+
+    const assinantes = [];
+
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      assinantes.push({
+        uid: doc.id,
+        email: data.email || 'desconhecido',
+        plano: data.plano || 'mensal',
+        status: data.acessoPago ? 'ativo' : 'inativo',
+        dataAtivacao: data.dataAtivacao?.toDate()?.toISOString() || data.dataAtivacao || null,
+      });
+    });
+
+    res.json({ assinantes });
+  } catch (error) {
+    console.error('Erro ao listar assinantes:', error);
+    res.status(500).json({ error: 'Erro ao listar assinantes' });
+  }
+});
+
+// ─── VERIFICAR ACESSO ────────────────────────────
+app.post('/verificarAcesso', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const doc = await db.collection('usuarios').doc(userId).get();
+
+    if (doc.exists && doc.data().acessoPago === true) {
+      const data = doc.data();
+      const DIAS_PLANO = { mensal: 30, semestral: 180, anual: 365 };
+      const totalDias = DIAS_PLANO[data.plano] || 30;
+      let diasRestantes = totalDias;
+
+      if (data.dataAtivacao) {
+        const ativacao = data.dataAtivacao.toDate ? data.dataAtivacao.toDate() : new Date(data.dataAtivacao);
+        const agora = new Date();
+        const diffMs = agora.getTime() - ativacao.getTime();
+        const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        diasRestantes = Math.max(totalDias - diffDias, 0);
+      }
+
+      return res.json({
+        acessoPago: true,
+        plano: data.plano || 'mensal',
+        diasRestantes,
+      });
+    }
+
+    res.json({ acessoPago: false });
+  } catch (error) {
+    console.error('Erro ao verificar acesso:', error);
+    res.status(500).json({ error: 'Erro ao verificar acesso' });
+  }
+});
+
+// ─── INICIAR SERVIDOR ─────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
