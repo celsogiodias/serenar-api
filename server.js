@@ -3,7 +3,6 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const { MercadoPagoConfig, Preference } = require('mercadopago');
 const crypto = require('crypto');
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -48,13 +47,11 @@ app.post('/iniciarSessao', authMiddleware, async (req, res) => {
     const userId = req.user.uid;
     const sessionToken = crypto.randomUUID();
     const firestore = admin.firestore();
-
     await firestore.collection('sessoes').doc(userId).set({
       sessionToken,
       deviceId,
       ultimoLogin: admin.firestore.FieldValue.serverTimestamp(),
     });
-
     res.json({ sessionToken });
   } catch (error) {
     console.error('Erro ao iniciar sessão:', error);
@@ -67,17 +64,12 @@ app.post('/validarSessao', authMiddleware, async (req, res) => {
     const { sessionToken } = req.body;
     const userId = req.user.uid;
     const firestore = admin.firestore();
-
     const doc = await firestore.collection('sessoes').doc(userId).get();
-
-    // Primeiro login — sem sessão anterior, permitir
     if (!doc.exists) {
       return res.json({ valida: true, motivo: null });
     }
-
     const sessao = doc.data();
     const valida = sessao.sessionToken === sessionToken;
-
     res.json({
       valida,
       motivo: valida ? null : 'Sessão expirada — outro dispositivo fez login',
@@ -111,9 +103,9 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
         }],
         payer: { email: req.user.email },
         back_urls: {
-          success: 'serenarapp://pagamento/sucesso',
-          failure: 'https://serenar-app.web.app/pagamento/erro',
-          pending: 'https://serenar-app.web.app/pagamento/pendente',
+          success: 'serenar://pagamento/sucesso',
+          failure: 'serenar://pagamento/erro',
+          pending: 'serenar://pagamento/pendente',
         },
         auto_return: 'approved',
         notification_url: 'https://serenar-api.onrender.com/webhook',
@@ -130,11 +122,65 @@ app.post('/criarPagamento', authMiddleware, async (req, res) => {
 // ─── WEBHOOK ──────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('Webhook recebido:', JSON.stringify(req.body, null, 2));
+    const { type, data } = req.body;
+    console.log('Webhook recebido:', type);
+
+    if (type === 'payment') {
+      const paymentId = data.id;
+      const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        headers: { Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}` },
+      });
+      const payment = await response.json();
+
+      if (payment.status === 'approved') {
+        const { userId, plano } = payment.metadata;
+        const firestore = admin.firestore();
+        await firestore.collection('usuarios').doc(userId).update({
+          acessoPago: true,
+          plano,
+          dataAtivacao: admin.firestore.FieldValue.serverTimestamp(),
+          paymentId,
+        });
+        console.log(`Usuário ${userId} ativado (${plano})`);
+      }
+    }
     res.sendStatus(200);
   } catch (error) {
     console.error('Erro no webhook:', error);
     res.sendStatus(200);
+  }
+});
+
+// ─── ESTORNO ──────────────────────────────────────────
+app.post('/estornarPagamento', authMiddleware, async (req, res) => {
+  try {
+    const { paymentId } = req.body;
+    const userId = req.user.uid;
+
+    const response = await fetch(
+      `https://api.mercadopago.com/v1/payments/${paymentId}/refunds`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    const data = await response.json();
+
+    if (data.status === 'approved' || data.status === 'refunded') {
+      const firestore = admin.firestore();
+      await firestore.collection('usuarios').doc(userId).update({
+        acessoPago: false,
+        dataEstorno: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao estornar:', error);
+    res.status(500).json({ error: 'Erro ao estornar pagamento' });
   }
 });
 
