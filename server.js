@@ -25,6 +25,16 @@ const serviceAccount = {
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
+// ─── FUNÇÃO AUXILIAR ────────────────────────────────
+function formatarData(data) {
+  if (!data) return null;
+  // Se for Timestamp do Firestore
+  if (data.toDate) return data.toDate().toISOString();
+  // Se for string
+  if (typeof data === 'string') return data;
+  return null;
+}
+
 // ─── MERCADO PAGO ───────────────────────────────────
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
@@ -193,9 +203,9 @@ app.post('/estornarPagamento', authMiddleware, async (req, res) => {
   }
 });
 
-// 
+// ═══════════════════════════════════════════════════════
 // ─── NOVAS ROTAS: EARLY ACCESS E ASSINANTES ───────
-// 
+// ═══════════════════════════════════════════════════════
 
 // ─── LISTAR EARLY ACCESS ──────────────────────────
 app.get('/listarEarlyAccess', authMiddleware, async (req, res) => {
@@ -208,7 +218,7 @@ app.get('/listarEarlyAccess', authMiddleware, async (req, res) => {
       emails.push({
         email: doc.id,
         status: data.status || 'convidado',
-        criadoEm: data.criadoEm?.toDate()?.toISOString() || null,
+        criadoEm: formatarData(data.criadoEm),
       });
     });
 
@@ -267,7 +277,7 @@ app.get('/listarAssinantes', authMiddleware, async (req, res) => {
         email: data.email || 'desconhecido',
         plano: data.plano || 'mensal',
         status: data.acessoPago ? 'ativo' : 'inativo',
-        dataAtivacao: data.dataAtivacao?.toDate()?.toISOString() || data.dataAtivacao || null,
+        dataAtivacao: formatarData(data.dataAtivacao),
       });
     });
 
@@ -291,7 +301,9 @@ app.post('/verificarAcesso', authMiddleware, async (req, res) => {
       let diasRestantes = totalDias;
 
       if (data.dataAtivacao) {
-        const ativacao = data.dataAtivacao.toDate ? data.dataAtivacao.toDate() : new Date(data.dataAtivacao);
+        const ativacao = data.dataAtivacao.toDate
+          ? data.dataAtivacao.toDate()
+          : new Date(data.dataAtivacao);
         const agora = new Date();
         const diffMs = agora.getTime() - ativacao.getTime();
         const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
