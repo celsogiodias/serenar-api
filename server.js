@@ -193,9 +193,9 @@ app.post('/estornarPagamento', authMiddleware, async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════
+// 
 // ─── NOVAS ROTAS: EARLY ACCESS E ASSINANTES ───────
-// ═══════════════════════════════════════════════════════
+// 
 
 // ─── LISTAR EARLY ACCESS ──────────────────────────
 app.get('/listarEarlyAccess', authMiddleware, async (req, res) => {
